@@ -107,10 +107,25 @@ fn parseValue(self: Yaml, arena: Allocator, comptime T: type, value: Value) Erro
             const string = try value.asString();
             return self.parsePointer(arena, T, .{ .string = try arena.dupe(u8, string) });
         },
+        .@"enum" => return self.parseEnum(arena, T, .{ .string = try value.asString() }),
         .void => error.TypeMismatch,
         .optional => unreachable,
         else => error.Unimplemented,
     };
+}
+
+fn parseEnum(self: Yaml, arena: Allocator, comptime T: type, value: Value) Error!T {
+    _ = self;
+    _ = arena;
+    const enum_info = @typeInfo(T).@"enum";
+    inline for (enum_info.fields) |field| {
+        const s = try value.asString();
+        const n = std.mem.span(field.name.ptr);
+        if (std.mem.eql(u8, n, s)) {
+            return @enumFromInt(field.value);
+        }
+    }
+    return error.EnumValueNotFound;
 }
 
 fn parseBoolean(self: Yaml, comptime T: type, value: Value) Error!T {
@@ -228,6 +243,7 @@ const longestBooleanValueString = blk: {
 pub const Error = error{
     Unimplemented,
     TypeMismatch,
+    EnumValueNotFound,
     StructFieldMissing,
     ArraySizeMismatch,
     UntaggedUnion,
@@ -627,7 +643,7 @@ pub const Value = union(enum) {
             // TODO we should probably have an option to encode `null` and also
             // allow for some default value too.
             .optional => return if (input) |val| encode(arena, val) else null,
-
+            .@"enum" => return encode(arena, @tagName(input)),
             .null => return null,
 
             else => {
