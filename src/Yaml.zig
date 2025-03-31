@@ -81,17 +81,17 @@ pub fn parse(self: Yaml, arena: Allocator, comptime T: type) Error!T {
                     }
                     return parsed;
                 },
-                else => return error.TypeMismatch,
+                else => return Error.TypeMismatch,
             }
         },
-        .@"union" => return error.Unimplemented,
-        else => return error.TypeMismatch,
+        .@"union" => return Error.Unimplemented,
+        else => return Error.TypeMismatch,
     }
 }
 
 fn parseValue(self: Yaml, arena: Allocator, comptime T: type, value: Value) Error!T {
     return switch (@typeInfo(T)) {
-        .int => math.cast(T, try value.asInt()) orelse return error.Overflow,
+        .int => math.cast(T, try value.asInt()) orelse return Error.Overflow,
         .bool => self.parseBoolean(bool, value),
         .float => if (value.asFloat()) |float| {
             return math.lossyCast(T, float);
@@ -119,13 +119,22 @@ fn parseEnum(self: Yaml, arena: Allocator, comptime T: type, value: Value) Error
     _ = arena;
     const enum_info = @typeInfo(T).@"enum";
     inline for (enum_info.fields) |field| {
-        const s = try value.asString();
-        const n = std.mem.span(field.name.ptr);
-        if (std.mem.eql(u8, n, s)) {
-            return @enumFromInt(field.value);
+        switch (value) {
+            .string => |s| {
+                const n = std.mem.span(field.name.ptr);
+                if (std.mem.eql(u8, n, s)) {
+                    return @enumFromInt(field.value);
+                }
+            },
+            .int => |i| {
+                if (i == field.value) {
+                    return @enumFromInt(i);
+                }
+            },
+            else => return Error.EnumFieldNotFound,
         }
     }
-    return error.EnumValueNotFound;
+    return Error.EnumFieldNotFound;
 }
 
 fn parseBoolean(self: Yaml, comptime T: type, value: Value) Error!T {
@@ -146,9 +155,9 @@ fn parseUnion(self: Yaml, arena: Allocator, comptime T: type, value: Value) Erro
                 else => return err,
             }
         }
-    } else return error.UntaggedUnion;
+    } else return Error.UntaggedUnion;
 
-    return error.UnionTagMissing;
+    return Error.UnionTagMissing;
 }
 
 fn parseOptional(self: Yaml, arena: Allocator, comptime T: type, value: ?Value) Error!T {
@@ -174,7 +183,7 @@ fn parseStruct(self: Yaml, arena: Allocator, comptime T: type, map: Map) Error!T
 
         const unwrapped = value orelse {
             log.debug("missing struct field: {s}: {s}", .{ field.name, @typeName(field.type) });
-            return error.StructFieldMissing;
+            return Error.StructFieldMissing;
         };
         @field(parsed, field.name) = try self.parseValue(arena, field.type, unwrapped);
     }
@@ -197,13 +206,13 @@ fn parsePointer(self: Yaml, arena: Allocator, comptime T: type, value: Value) Er
             }
             return parsed;
         },
-        else => return error.Unimplemented,
+        else => return Error.Unimplemented,
     }
 }
 
 fn parseArray(self: Yaml, arena: Allocator, comptime T: type, list: List) Error!T {
     const array_info = @typeInfo(T).array;
-    if (array_info.len != list.len) return error.ArraySizeMismatch;
+    if (array_info.len != list.len) return Error.ArraySizeMismatch;
 
     var parsed: T = undefined;
     for (list, 0..) |elem, i| {
@@ -243,7 +252,7 @@ const longestBooleanValueString = blk: {
 pub const Error = error{
     Unimplemented,
     TypeMismatch,
-    EnumValueNotFound,
+    EnumFieldNotFound,
     StructFieldMissing,
     ArraySizeMismatch,
     UntaggedUnion,
